@@ -1,6 +1,6 @@
 # 📘 Distributed Task Scheduler — Project Bible (Interview Preparation)
 
-> **Purpose of this document**: A complete reference covering every concept, system call, design decision, and potential interview question related to this project. Read this cover-to-cover before your interview.
+> **Purpose**: A complete interview-preparation reference covering every concept, system call, C++ feature, Python component, and design decision in this project.
 
 ---
 
@@ -16,13 +16,20 @@
 8. [File Descriptor Redirection — dup2()](#8-file-descriptor-redirection--dup2)
 9. [Inter-Process Communication — pipe()](#9-inter-process-communication--pipe)
 10. [Waiting for Children — waitpid()](#10-waiting-for-children--waitpid)
-11. [Load Balancing](#11-load-balancing)
-12. [Code Walkthrough](#12-code-walkthrough)
-13. [Error Handling & Edge Cases](#13-error-handling--edge-cases)
-14. [How to Build and Run](#14-how-to-build-and-run)
-15. [Potential Interview Questions (35+ Q&A)](#15-potential-interview-questions-35-qa)
-16. [How to Extend This Project](#16-how-to-extend-this-project)
-17. [Glossary](#17-glossary)
+11. [Load Balancing & Task Queue](#11-load-balancing--task-queue)
+12. [C++ Concepts Used](#12-c-concepts-used)
+13. [Python Client — Cross-Language Interoperability](#13-python-client--cross-language-interoperability)
+14. [Code Walkthrough](#14-code-walkthrough)
+15. [Error Handling & Edge Cases](#15-error-handling--edge-cases)
+16. [How to Build and Run](#16-how-to-build-and-run)
+17. [Interview Questions — Sockets & Networking (Q1–Q10)](#17-interview-questions--sockets--networking)
+18. [Interview Questions — Process Management (Q11–Q22)](#18-interview-questions--process-management)
+19. [Interview Questions — I/O and Pipes (Q23–Q28)](#19-interview-questions--io-and-pipes)
+20. [Interview Questions — C++ Concepts (Q29–Q38)](#20-interview-questions--c-concepts)
+21. [Interview Questions — Python & Cross-Language (Q39–Q43)](#21-interview-questions--python--cross-language)
+22. [Interview Questions — Architecture & Design (Q44–Q50)](#22-interview-questions--architecture--design)
+23. [How to Extend This Project](#23-how-to-extend-this-project)
+24. [Glossary](#24-glossary)
 
 ---
 
@@ -30,92 +37,81 @@
 
 ### What is this project?
 
-A **Distributed Task Scheduler** built in C using the **Master-Worker model**. The system distributes shell commands across multiple Worker processes that can run on the same machine or across a network.
+A **Distributed Task Scheduler** built with **C++** and **Python** using the **Master-Worker model**. The system distributes shell commands across multiple Worker processes for parallel execution.
 
-### What does it demonstrate?
+### Tech Stack
 
-| Concept | Where it's used |
+| Component | Language | Why |
+|---|---|---|
+| **Master** | C++ | Classes, STL containers, RAII for resource management |
+| **Worker** | C++ | POSIX process APIs (fork/exec/dup2/pipe) + C++ structure |
+| **Client** | Python | Rapid prototyping, demonstrate cross-language interop |
+| **Protocol** | Shared | Length-prefix framing works across both languages |
+
+### What it demonstrates
+
+| Concept | Where |
 |---|---|
-| TCP Socket Programming | Master (server) and Worker (client) communication |
-| Process Creation (fork) | Worker creates child processes to execute commands |
-| Process Execution (exec) | Child process runs the shell command |
-| I/O Redirection (dup2) | Captures command output by redirecting stdout to a pipe |
-| Inter-Process Communication (pipe) | Sends command output from child to parent |
-| Load Balancing | Master assigns tasks to the first available worker |
-| I/O Multiplexing (select) | Master monitors multiple connections without threads |
-
-### The Components
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         MASTER NODE                             │
-│                                                                 │
-│  ┌──────────────┐  ┌────────────────┐  ┌─────────────────────┐  │
-│  │ TCP Server   │  │ Worker         │  │ Load Balancer       │  │
-│  │ Socket       │  │ Registry       │  │ (First-Available)   │  │
-│  │              │  │ [fd, ip, busy] │  │                     │  │
-│  └──────────────┘  └────────────────┘  └─────────────────────┘  │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ select() Event Loop                                      │   │
-│  │  Monitors: stdin + server socket + all worker sockets    │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-          │                                   │
-          │ TCP Connection                    │ TCP Connection
-          ▼                                   ▼
-┌─────────────────────┐          ┌─────────────────────┐
-│    WORKER NODE #1    │          │    WORKER NODE #2    │
-│                      │          │                      │
-│ ┌──────────────────┐ │          │ ┌──────────────────┐ │
-│ │ connect()        │ │          │ │ connect()        │ │
-│ │ recv command     │ │          │ │ recv command     │ │
-│ │ fork() → child   │ │          │ │ fork() → child   │ │
-│ │   dup2() stdout  │ │          │ │   dup2() stdout  │ │
-│ │   execvp() cmd   │ │          │ │   execvp() cmd   │ │
-│ │ waitpid()        │ │          │ │ waitpid()        │ │
-│ │ send result      │ │          │ │ send result      │ │
-│ └──────────────────┘ │          │ └──────────────────┘ │
-└─────────────────────┘          └─────────────────────┘
-```
+| TCP Socket Programming | Master (server) + Worker/Client (clients) |
+| Process Creation (fork) | Worker creates child processes |
+| Process Execution (exec) | Child runs the shell command |
+| I/O Redirection (dup2) | Captures stdout to a pipe |
+| IPC (pipe) | Output flows from child to parent |
+| Load Balancing | Master picks first free worker |
+| Task Queue | `std::queue` buffers tasks when all workers busy |
+| RAII | Socket class auto-closes fds |
+| Cross-Language Protocol | Same wire format in C++ and Python |
 
 ---
 
 ## 2. Architecture & Data Flow
 
-### End-to-End Flow of a Task
+```
+┌──────────────────────────────────────────────────┐
+│                  MASTER NODE (C++)                │
+│                                                   │
+│  ┌─────────────┐  ┌───────────────┐  ┌──────────┐│
+│  │ TCP Server   │  │ Worker        │  │ Load     ││
+│  │ Socket       │  │ Registry      │  │ Balancer ││
+│  │              │  │ std::vector   │  │          ││
+│  └─────────────┘  └───────────────┘  └──────────┘│
+│                                                   │
+│  ┌────────────────────────────────────────────┐   │
+│  │ Task Queue: std::queue<string>              │   │
+│  │ Auto-dispatches when workers become free    │   │
+│  └────────────────────────────────────────────┘   │
+│                                                   │
+│  ┌────────────────────────────────────────────┐   │
+│  │ select() Event Loop                         │   │
+│  │ Monitors: stdin + server fd + worker fds    │   │
+│  └────────────────────────────────────────────┘   │
+└───────────┬────────────────────────┬──────────────┘
+            │ TCP                    │ TCP
+      ┌─────▼──────┐          ┌─────▼──────┐
+      │ WORKER (C++)│          │ CLIENT (Py)│
+      │             │          │            │
+      │ fork()      │          │ socket lib │
+      │ dup2()      │          │ struct lib │
+      │ execvp()    │          │ interactive│
+      │ waitpid()   │          │ CLI        │
+      └─────────────┘          └────────────┘
+```
+
+### End-to-End Flow
 
 ```
-STEP 1: Operator types "uptime" in the Master's terminal
-         │
-STEP 2: Master's select() detects stdin is readable
-         │
-STEP 3: Master reads "uptime" from stdin
-         │
-STEP 4: Load Balancer finds Worker #0 (isBusy == false)
-         │
-STEP 5: Master sends: [4 bytes: length=6] + [6 bytes: "uptime"]
-         │  (Length-prefix protocol over TCP)
-         │
-STEP 6: Worker #0 receives the message
-         │
-STEP 7: Worker calls pipe() to create a data channel
-         │
-STEP 8: Worker calls fork() to create a child process
-         │
-STEP 9: CHILD: dup2() redirects stdout/stderr → pipe
-         │      execvp("uptime", ["uptime", NULL])
-         │      → Child IS NOW the 'uptime' program
-         │      → Prints " 10:23:45 up 5 days, ..." into the pipe
-         │
-STEP 10: PARENT (Worker): reads output from pipe
-          │                waitpid() to reap child + get exit code
-          │
-STEP 11: Worker sends result back to Master via TCP
-          │
-STEP 12: Master's select() detects worker fd is readable
-          │
-STEP 13: Master reads the result, prints it, marks Worker #0 as free
+1. Operator types "uptime" (via Master stdin or Python client)
+2. Master's select() detects the input
+3. Load Balancer finds first worker where is_busy == false
+4. Master sends: [4 bytes: length=6] + [6 bytes: "uptime"]
+5. Worker receives the message
+6. Worker: pipe() → fork()
+7.   CHILD: dup2(pipe→stdout) → execvp("uptime")
+8.   PARENT: read(pipe) → waitpid() → capture output + exit code
+9. Worker sends result back via TCP
+10. Master's select() detects worker fd is readable
+11. Master prints result, marks worker as free
+12. If tasks are queued: auto-dispatch next task
 ```
 
 ---
@@ -124,919 +120,726 @@ STEP 13: Master reads the result, prints it, marks Worker #0 as free
 
 ### The Problem
 
-TCP is a **byte-stream** protocol. Unlike UDP (which preserves message boundaries), TCP treats all data as a continuous stream of bytes. This means:
+TCP is a **byte-stream protocol** — no message boundaries. `send("Hello")` + `send("World")` might arrive as `"HelloWorld"` or `"He"` + `"lloWorld"`.
 
-- `send("Hello")` followed by `send("World")` might arrive as `"HelloWorld"` in a single `recv()`.
-- A single `send("Hello World")` might arrive as `"Hello"` and `" World"` in two separate `recv()` calls.
+### The Solution
 
-### The Solution: Length-Prefix Framing
-
-Before every message, we send a **4-byte integer** representing the message length:
+Before every message, send a **4-byte big-endian integer** containing the message length:
 
 ```
 ┌──────────────────┬─────────────────────────────┐
 │ 4 bytes (uint32)  │  N bytes (payload)          │
 │ Message Length    │  Message Data               │
-│ (network order)  │  (UTF-8 string)             │
+│ (big-endian)     │  (UTF-8 string)             │
 └──────────────────┴─────────────────────────────┘
-
-Example: Sending "uptime"
-  [0x00 0x00 0x00 0x06] [0x75 0x70 0x74 0x69 0x6D 0x65]
-  ---- length = 6 ----  ---------- "uptime" -----------
 ```
 
-### Why network byte order (Big-Endian)?
+### In C++
 
-Different CPUs store multi-byte integers differently:
-- **Big-Endian**: Most significant byte first (0x00 0x00 0x00 0x06) — used by network protocols
-- **Little-Endian**: Least significant byte first (0x06 0x00 0x00 0x00) — used by x86 Intel/AMD CPUs
-
-We use `htonl()` (Host TO Network Long) to convert before sending and `ntohl()` (Network TO Host Long) when receiving. This ensures Master and Worker can communicate even if running on different CPU architectures.
-
-### Implementation (in protocol.h)
-
-```c
-// Sending
-uint32_t len = strlen(msg);
-uint32_t net_len = htonl(len);       // Convert to big-endian
-send(fd, &net_len, 4, 0);           // Send 4-byte length
-send(fd, msg, len, 0);              // Send payload
-
-// Receiving
-uint32_t net_len;
-recv(fd, &net_len, 4, MSG_WAITALL); // Read 4-byte length
-uint32_t len = ntohl(net_len);       // Convert to host order
-recv(fd, buf, len, 0);              // Read exactly 'len' bytes
-buf[len] = '\0';                     // Null-terminate
+```cpp
+uint32_t net_len = htonl(len);
+send(fd, &net_len, 4, 0);
+send(fd, msg.c_str(), len, 0);
 ```
 
-### Interview Q&A
+### In Python (same protocol!)
 
-**Q: "Why not just use a delimiter like newline (\\n) to separate messages?"**
-A: Delimiter-based framing works for text protocols (like HTTP/1.1 headers), but has drawbacks:
-- The delimiter character cannot appear in the payload (or needs escaping).
-- You have to scan every byte for the delimiter.
-- Length-prefix is O(1) to determine message length; delimiter scanning is O(n).
+```python
+header = struct.pack("!I", len(data))   # "!I" = big-endian unsigned 32-bit
+sock.sendall(header + data)
+```
 
-**Q: "What if the length field itself gets corrupted or is a huge number?"**
-A: We add a safety check: if `len >= BUFFER_SIZE`, we reject the message. In production, you'd also add checksums (CRC) and a maximum message size limit.
+Both use **network byte order (big-endian)** — this is why the Python client can talk to the C++ Master seamlessly.
+
+### Why htonl() / ntohl()?
+
+x86 CPUs are **little-endian** (least significant byte first). Network protocols use **big-endian** (most significant byte first). `htonl()` converts host→network and `ntohl()` converts network→host.
 
 ---
 
 ## 4. The Networking Layer — Socket Programming
 
-### What is a Socket?
+### Socket Lifecycle
 
-A socket is an **endpoint for communication**. Think of it as a mailbox:
-- You create it (`socket()`).
-- You assign it an address (`bind()`).
-- You use it to send/receive data.
-
-In UNIX, **everything is a file**. A socket is represented as a **file descriptor** (an integer), just like files, pipes, and stdin/stdout.
-
-### The Berkeley Sockets API
-
-This is the standard API for network programming, defined in the POSIX standard.
-
-#### Server Side (Master)
-
+**Server (Master):**
 ```
-socket()  ──────► Create a TCP socket (returns fd)
-    │
-bind()    ──────► Attach to IP address + port number
-    │
-listen()  ──────► Mark as passive (ready to accept)
-    │
-accept()  ──────► Block until a client connects
-    │               Returns a NEW fd for that client
-    │
-recv()/send() ──► Communicate with the specific client
-    │
-close()   ──────► Terminate the connection
+socket() → bind() → listen() → accept() → recv()/send() → close()
 ```
 
-#### Client Side (Worker)
-
+**Client (Worker / Python Client):**
 ```
-socket()  ──────► Create a TCP socket (returns fd)
-    │
-connect() ──────► Connect to server's IP:port
-    │               (triggers TCP 3-way handshake)
-    │
-recv()/send() ──► Communicate with the server
-    │
-close()   ──────► Terminate the connection
+socket() → connect() → recv()/send() → close()
 ```
 
-### Key System Calls Explained
+### Key System Calls
 
-#### socket(AF_INET, SOCK_STREAM, 0)
-
-```c
-int fd = socket(AF_INET, SOCK_STREAM, 0);
-```
-
-| Parameter | Meaning |
+| Call | Purpose |
 |---|---|
-| AF_INET | IPv4 address family |
-| SOCK_STREAM | TCP (reliable, ordered, connection-oriented) |
-| 0 | Default protocol for the given type (TCP for SOCK_STREAM) |
+| `socket(AF_INET, SOCK_STREAM, 0)` | Create a TCP socket (returns fd) |
+| `bind(fd, addr, len)` | Attach socket to IP+port |
+| `listen(fd, backlog)` | Mark as passive (accept connections) |
+| `accept(fd, ...)` | Block until a client connects; returns a new fd |
+| `connect(fd, addr, len)` | Client: connect to server (3-way handshake) |
+| `setsockopt(SO_REUSEADDR)` | Allow port reuse (avoid "Address in use") |
 
-**Returns**: A file descriptor (integer ≥ 0) on success, -1 on error.
-
-#### bind(fd, address, length)
-
-Assigns a local address (IP + port) to the socket.
-
-```c
-struct sockaddr_in addr;
-addr.sin_family      = AF_INET;
-addr.sin_addr.s_addr = INADDR_ANY;     // Listen on ALL interfaces
-addr.sin_port        = htons(8080);    // Port 8080 in network byte order
-
-bind(fd, (struct sockaddr *)&addr, sizeof(addr));
-```
-
-**`INADDR_ANY`** means "bind to all available network interfaces" — so the server accepts connections on any of its IP addresses (127.0.0.1, 192.168.x.x, etc.).
-
-#### listen(fd, backlog)
-
-Marks the socket as **passive** (it can now accept connections).
-
-The `backlog` parameter (we use 5) specifies how many pending connections the kernel queues before rejecting new ones. This is NOT the max number of total connections — it's the queue for connections that haven't been `accept()`ed yet.
-
-#### accept(fd, ...)
-
-**Blocks** until a client calls `connect()`. Returns a **brand new** file descriptor dedicated to that specific client connection.
-
-**Critical distinction**:
-- The **listening socket** keeps accepting new connections (like a receptionist).
-- Each `accept()` returns a **new socket** for the established connection (like a dedicated phone line).
-
-#### connect(fd, address, length)
-
-Client-side: initiates a connection to the server. This triggers the **TCP 3-Way Handshake**:
+### TCP 3-Way Handshake
 
 ```
 Client              Server
-  │── SYN ────────────►│   "I want to connect"
-  │◄── SYN-ACK ────── │   "OK, I acknowledge"
-  │── ACK ────────────►│   "Connection established"
+  │── SYN ────────────►│
+  │◄── SYN-ACK ───────│
+  │── ACK ────────────►│
+  → Connection established
 ```
 
-### setsockopt(SO_REUSEADDR) — Why?
+### TCP vs UDP
 
-Without this, if the Master crashes and restarts quickly, `bind()` fails with "Address already in use." This happens because the OS keeps the port in `TIME_WAIT` state (a TCP mechanism to ensure all in-flight packets are delivered). `SO_REUSEADDR` allows binding to a port in `TIME_WAIT`.
-
-### TCP vs UDP — Interview Comparison
-
-| Feature | TCP (SOCK_STREAM) | UDP (SOCK_DGRAM) |
+| Feature | TCP | UDP |
 |---|---|---|
-| Connection | Connection-oriented (3-way handshake) | Connectionless |
-| Reliability | Guaranteed delivery (ACKs + retransmission) | No guarantees |
-| Ordering | In-order delivery | No ordering |
-| Message boundaries | NO (byte stream) | YES (datagrams) |
-| Speed | Slower (overhead) | Faster |
-| Use case | File transfer, HTTP, our scheduler | DNS, video streaming, gaming |
-
-**Why TCP for this project?** We CANNOT afford to lose a task. TCP guarantees every command reaches the Worker and every result reaches the Master.
+| Connection | Connection-oriented | Connectionless |
+| Reliability | Guaranteed (ACKs) | No guarantees |
+| Ordering | In-order | No ordering |
+| Message boundaries | NO (stream) | YES (datagrams) |
+| Use in this project | ✅ Can't lose tasks | ✗ |
 
 ---
 
 ## 5. I/O Multiplexing with select()
 
-### The Problem
+The Master monitors multiple fds simultaneously without threads:
 
-The Master needs to monitor **multiple things at once**:
-1. Stdin — Is the operator typing a new command?
-2. Server socket — Is a new Worker trying to connect?
-3. Worker sockets — Has any Worker sent back a result?
+```cpp
+fd_set read_fds;
+FD_ZERO(&read_fds);
+FD_SET(STDIN_FILENO, &read_fds);    // Operator input
+FD_SET(server_fd, &read_fds);       // New worker connections
+for (auto& w : workers_)
+    FD_SET(w.fd, &read_fds);        // Worker results
 
-Without multiplexing, we'd need **blocking reads** on each, which means we can't respond to the others.
+select(max_fd + 1, &read_fds, NULL, NULL, NULL);  // BLOCK
 
-### The Solution: select()
-
-`select()` monitors multiple file descriptors and **blocks until at least one is ready** for I/O.
-
-```c
-fd_set read_fds;                    // A bitmask of fds to watch
-FD_ZERO(&read_fds);                // Clear the set
-FD_SET(STDIN_FILENO, &read_fds);   // Add stdin (fd 0)
-FD_SET(server_fd, &read_fds);      // Add listening socket
-FD_SET(worker_fd, &read_fds);      // Add a worker socket
-
-// Block until something is ready
-select(max_fd + 1, &read_fds, NULL, NULL, NULL);
-
-// Check what's ready
-if (FD_ISSET(server_fd, &read_fds)) {
-    // A new worker is connecting!
-}
-if (FD_ISSET(STDIN_FILENO, &read_fds)) {
-    // Operator typed a new command!
-}
+if (FD_ISSET(server_fd, &read_fds))    // → accept_worker()
+if (FD_ISSET(STDIN_FILENO, &read_fds)) // → assign_task()
+for (auto& w : workers_)
+    if (FD_ISSET(w.fd, &read_fds))     // → handle_result()
 ```
 
-### How select() Works Internally
+### select() vs alternatives
 
-1. You build an `fd_set` (a bitmap — each bit represents one fd).
-2. You call `select()` — the kernel monitors those fds.
-3. When any fd has data available, `select()` returns and **modifies** the fd_set to contain only the ready fds.
-4. You check each fd with `FD_ISSET()`.
-
-### Why select() Over Threads?
-
-| Approach | Pros | Cons |
+| Method | Pros | Cons |
 |---|---|---|
-| **select()** | No thread sync issues, simple control flow, portable | O(n) scan of fd_set, FD_SETSIZE limit (1024) |
-| **Threads** | True parallelism, simpler per-connection code | Race conditions, mutex overhead, complex debugging |
-| **epoll()** (Linux) | O(1) event notification, scales to 100k+ fds | Linux-only, more complex API |
+| **select()** | Simple, portable | O(n) scan, FD_SETSIZE=1024 |
+| **poll()** | No fd limit | Still O(n) |
+| **epoll()** | O(1), scalable | Linux-only |
+| **Threads** | True parallelism | Race conditions, mutexes |
 
-For our small number of connections, `select()` is perfect and avoids the complexity of multi-threading.
-
-### The max_fd + 1 Parameter
-
-`select()` takes `nfds` as its first argument: the highest-numbered fd **plus one**. This tells the kernel how many bits in the fd_set to check. We track this by updating `max_fd` every time we add an fd.
+For our small number of connections, select() is ideal.
 
 ---
 
 ## 6. Process Creation — fork()
 
-### What fork() Does
+`fork()` creates a new process by duplicating the caller.
 
-`fork()` creates a **new process** by duplicating the calling process.
-
-```c
+```cpp
 pid_t pid = fork();
-// After this line, there are TWO processes running:
-//   Parent: pid > 0 (the child's process ID)
-//   Child:  pid == 0
+// pid > 0 → parent (value is child's PID)
+// pid == 0 → child
+// pid < 0 → error
 ```
 
-### What Gets Copied?
+### Copy-On-Write (COW)
 
-| Copied | NOT Copied |
-|---|---|
-| Code (text segment) | Process ID (child gets a new PID) |
-| Data segment | Parent PID (child's PPID = parent's PID) |
-| Heap | Locks held by threads |
-| Stack | Pending signals |
-| File descriptors (including sockets!) | |
-| Environment variables | |
-
-### Copy-On-Write (COW) — Interview Favorite!
-
-**Q: "Doesn't copying everything make fork() slow?"**
-
-**A:** No! Modern kernels use **Copy-On-Write (COW)**:
-1. After `fork()`, parent and child **share** the same physical memory pages.
-2. Both pages are marked as **read-only** in the page table.
-3. When either process tries to **write** to a page, a **page fault** occurs.
-4. The kernel then creates a **copy** of just that one page.
-5. This means: if the child immediately calls `exec()`, almost NO copying happens!
+After fork(), parent and child share the same physical memory pages (marked read-only). A page is copied only when one process writes to it. This makes fork() fast, especially when the child immediately calls exec().
 
 ```
-Before fork():
-  Parent: [Page A] [Page B] [Page C]
-
 After fork() (COW):
-  Parent: [Page A] [Page B] [Page C]   ← shared, read-only
+  Parent: [Page A] [Page B] [Page C]  ← shared, read-only
   Child:      ↑        ↑        ↑
 
 After child writes to Page B:
-  Parent: [Page A] [Page B ] [Page C]   ← original
-  Child:      ↑    [Page B'] ← copy       ↑
+  Parent: [Page A] [Page B ] [Page C]
+  Child:      ↑    [Page B']     ↑     ← only this page copied
 ```
 
-### Why We Use fork() in This Project
+### Why fork() in this project?
 
-The Worker needs to execute arbitrary shell commands. We can't just call the command directly because:
-1. `execvp()` **replaces** the current process. Without `fork()`, the Worker itself would become the command and stop being a Worker!
-2. `fork()` creates a **disposable child** that can be replaced by `execvp()` while the parent Worker continues running.
-
-### Zombie Processes
-
-**Q: "What is a zombie process?"**
-
-A **zombie** is a process that has terminated but whose parent hasn't read its exit status via `waitpid()`. It takes up an entry in the process table but consumes no CPU or memory (except the table slot).
-
-```
-[Worker] ─── fork() ───► [Child: running "uptime"]
-                                    │
-                              child finishes
-                                    │
-                              [Child: ZOMBIE]  ← until waitpid()
-                                    │
-              ◄── waitpid() ───────┘
-                              [Child: REMOVED from process table]
-```
-
-**Fix:** Always call `waitpid()` after `fork()`. That's exactly what we do.
-
-### Orphan Processes
-
-If the **parent** dies before the child, the child becomes an **orphan**. The init process (PID 1) adopts it and will call `waitpid()` when it terminates.
+`execvp()` **replaces** the current process. Without fork(), the Worker itself would become the command and stop being a Worker. Fork creates a disposable child for exec.
 
 ---
 
 ## 7. Process Execution — The exec() Family
 
-### What exec() Does
+`exec()` replaces the current process's memory with a new program. **Never returns on success.**
 
-`exec()` **replaces** the current process's memory with a new program. The PID stays the same. After a successful `exec()`, the old code is **gone forever** — `exec()` never returns on success.
+### Variants
 
-```c
-execvp("ls", argv);
-// If we reach this line, execvp FAILED
-perror("execvp failed");
-```
+| Function | Args | PATH search? |
+|---|---|---|
+| `execl()` | list | No |
+| `execlp()` | list | Yes |
+| `execv()` | array | No |
+| **`execvp()`** | **array** | **Yes** ← we use this |
+| `execve()` | array+env | No |
 
-### The exec() Variants — Interview Table
+Memory aid: **v** = vector (array), **p** = PATH, **e** = environment, **l** = list.
 
-| Function | Arguments | PATH search? | Environment? |
-|---|---|---|---|
-| `execl()` | list: `execl("/bin/ls", "ls", "-l", NULL)` | No (need full path) | Inherited |
-| `execlp()` | list | **Yes** | Inherited |
-| `execle()` | list + envp | No | Custom |
-| `execv()` | array: `execv("/bin/ls", argv)` | No | Inherited |
-| **`execvp()`** | **array** | **Yes** | **Inherited** |
-| `execve()` | array + envp | No | Custom |
+### Why execvp()?
 
-**Memory aid:**
-- `l` = **l**ist (args passed individually)
-- `v` = **v**ector (args passed as an array)
-- `p` = searches **P**ATH
-- `e` = custom **e**nvironment
+- **v**: We tokenize the command into a `std::vector`, so we need the array variant.
+- **p**: Users type `"uptime"` not `"/usr/bin/uptime"`, so we need PATH searching.
 
-### Why execvp() in Our Project?
+### _exit() vs exit() in child
 
-1. **`v` (vector)**: We tokenize the command string into an argv array, so we need the vector variant.
-2. **`p` (PATH search)**: Users type `"uptime"`, not `"/usr/bin/uptime"`. The `p` variant searches the system PATH for the binary.
-
-### What Happens Internally
-
-```
-Before execvp("ls", argv):
-  ┌─────────────────────────┐
-  │ Process PID=1234        │
-  │ Code: worker.c code     │
-  │ Data: worker's variables│
-  │ Stack: worker's stack   │
-  └─────────────────────────┘
-
-After execvp("ls", argv):
-  ┌─────────────────────────┐
-  │ Process PID=1234  ← same PID! │
-  │ Code: /usr/bin/ls code  │
-  │ Data: ls's variables    │
-  │ Stack: ls's stack       │
-  └─────────────────────────┘
-```
-
-### _exit() vs exit()
-
-In the child process, if `execvp()` fails, we use `_exit(127)` instead of `exit(0)`:
-
-- `exit()` flushes stdio buffers (shared with the parent), which could corrupt output.
-- `_exit()` terminates immediately without flushing buffers.
-- Exit code 127 is the convention for "command not found" (same as bash).
+After a failed execvp(), the child calls `_exit(127)` — not `exit()`. `exit()` flushes stdio buffers shared with the parent (causing double output). `_exit()` terminates immediately.
 
 ---
 
 ## 8. File Descriptor Redirection — dup2()
 
-### The File Descriptor Table
+`dup2(old_fd, new_fd)` makes new_fd point to the same file as old_fd.
 
-Every process has a **file descriptor table** — an array where each index (0, 1, 2, ...) points to a kernel file object:
-
-```
-FD Table (default):
-  fd 0 → stdin  (keyboard)
-  fd 1 → stdout (terminal)
-  fd 2 → stderr (terminal)
-  fd 3 → (our socket to Master)
-  fd 4 → pipe_fd[0] (pipe read end)
-  fd 5 → pipe_fd[1] (pipe write end)
+```cpp
+dup2(pipe_fd[1], STDOUT_FILENO);
+// Now fd 1 (stdout) → pipe write end
+// Anything printed goes into the pipe, not the terminal
 ```
 
-### What dup2() Does
-
-`dup2(old_fd, new_fd)`:
-1. Closes `new_fd` if it's open.
-2. Makes `new_fd` point to the **same kernel file object** as `old_fd`.
-
-```c
-dup2(pipe_fd[1], STDOUT_FILENO);   // STDOUT_FILENO = 1
-```
-
-**After this call:**
+### FD Table Before and After
 
 ```
-FD Table:
-  fd 0 → stdin  (keyboard)
-  fd 1 → pipe_fd[1] (pipe write end)  ← CHANGED!
-  fd 2 → stderr (terminal)
+Before:  fd 1 → terminal
+After:   fd 1 → pipe write end
+
+So when execvp("uptime") prints output → it goes into the pipe
+→ the parent reads it from the pipe's read end
 ```
 
-Now, **anything the child process prints to stdout goes into the pipe** instead of the terminal!
-
-### Why This Matters for Our Project
-
-When the Worker executes `uptime` via `execvp()`, the `uptime` program thinks it's writing to the terminal (stdout = fd 1). But we've **redirected** fd 1 to our pipe. So the output flows:
-
-```
-uptime → writes to fd 1 → BUT fd 1 is now the pipe → Parent reads from pipe
-```
-
-This is the same mechanism that the shell uses for `|` (pipes):
-```bash
-ls -la | grep ".c"
-# The shell does: fork, dup2(pipe, stdout) in ls, dup2(pipe, stdin) in grep
-```
+This is the same mechanism shells use for `ls | grep`.
 
 ---
 
 ## 9. Inter-Process Communication — pipe()
 
-### What pipe() Creates
-
-`pipe()` creates a **unidirectional data channel**:
-
-```c
+```cpp
 int pipe_fd[2];
 pipe(pipe_fd);
-// pipe_fd[0] = READ end  (data comes OUT of this end)
-// pipe_fd[1] = WRITE end (data goes INTO this end)
+// pipe_fd[0] = READ end
+// pipe_fd[1] = WRITE end
 ```
 
-Think of it as a literal pipe:
-```
-WRITE end ──────► [  pipe buffer (kernel)  ] ──────► READ end
-pipe_fd[1]                                          pipe_fd[0]
-```
+After fork(), close unused ends:
+- **Parent**: close write end, read from read end
+- **Child**: close read end, dup2 write end to stdout, close write end
 
-### Using Pipes with fork()
+### Why close unused ends?
 
-After `fork()`, **both** the parent and child have copies of the pipe file descriptors. The key rule: **close the ends you don't use**.
-
-```
-Before fork():
-  Worker: pipe_fd[0]=read, pipe_fd[1]=write
-
-After fork():
-  Parent (Worker): pipe_fd[0]=read  ← KEEP THIS
-                   pipe_fd[1]=write ← CLOSE THIS
-
-  Child (Command): pipe_fd[0]=read  ← CLOSE THIS
-                   pipe_fd[1]=write ← REDIRECT stdout TO THIS, THEN CLOSE
-```
-
-### Why Close Unused Ends?
-
-1. **EOF detection**: The read end gets EOF (returns 0) only when ALL write ends are closed. If the parent keeps the write end open, read() will never return EOF.
-2. **Resource management**: File descriptors are a limited resource.
-
-### Pipe Buffer Size
-
-The kernel maintains a buffer for each pipe (typically 64KB on Linux). If the buffer is full, `write()` blocks. If the buffer is empty, `read()` blocks. This naturally synchronizes the producer and consumer.
+1. `read()` returns EOF only when ALL write ends are closed
+2. File descriptors are a limited resource
 
 ---
 
 ## 10. Waiting for Children — waitpid()
 
-### What waitpid() Does
-
-```c
+```cpp
 int status;
-pid_t result = waitpid(pid, &status, 0);
+waitpid(pid, &status, 0);
+
+if (WIFEXITED(status))
+    int code = WEXITSTATUS(status);   // 0 = success
+if (WIFSIGNALED(status))
+    int sig = WTERMSIG(status);       // killed by signal
 ```
 
-`waitpid(pid, &status, 0)`:
-- **Blocks** until child `pid` terminates.
-- Stores the exit information in `status`.
-- **Reaps** the zombie process (removes it from the process table).
+### Zombie processes
 
-### Decoding the Status
+A terminated child not yet reaped by waitpid(). Takes a process table slot. We always call waitpid() to prevent zombies.
 
-The `status` integer is encoded with bit manipulation. Use macros to decode:
+### Orphan processes
 
-```c
-if (WIFEXITED(status)) {
-    // Child exited normally (called exit() or returned from main)
-    int code = WEXITSTATUS(status);   // 0 = success, non-zero = error
-    printf("Exit code: %d\n", code);
-}
-
-if (WIFSIGNALED(status)) {
-    // Child was killed by a signal (e.g., SIGKILL, SIGSEGV)
-    int sig = WTERMSIG(status);
-    printf("Killed by signal: %d\n", sig);
-}
-```
-
-### waitpid() Options
-
-| Flag | Behavior |
-|---|---|
-| `0` | Block until child terminates (what we use) |
-| `WNOHANG` | Return immediately if no child has exited (non-blocking) |
-| `WUNTRACED` | Also report stopped children (e.g., by SIGSTOP) |
+A child whose parent died. Adopted by init (PID 1). Not harmful.
 
 ---
 
-## 11. Load Balancing
+## 11. Load Balancing & Task Queue
 
-### Our Algorithm: First-Available
+### First-Available Load Balancing
 
-```c
-void assign_task(const char *command) {
-    for (int i = 0; i < worker_count; i++) {
-        if (!workers[i].isBusy) {
-            send_message(workers[i].fd, command);
-            workers[i].isBusy = 1;
-            return;
+```cpp
+bool assign_task(const std::string& command) {
+    for (auto& w : workers_) {
+        if (!w.is_busy) {
+            protocol::send_message(w.fd, command);
+            w.is_busy = true;
+            return true;
         }
     }
-    printf("All workers busy!\n");
+    return false;   // All busy
 }
 ```
 
-**Time Complexity**: O(n) where n = number of workers.
+### Task Queue (std::queue)
 
-### How It Works
+When all workers are busy, tasks are buffered:
 
-1. When a task arrives, scan the worker array left to right.
-2. Find the **first** worker where `isBusy == 0`.
-3. Send the task, mark as busy (`isBusy = 1`).
-4. When the worker sends back a result, mark as free (`isBusy = 0`).
+```cpp
+if (!assign_task(command)) {
+    task_queue_.push(command);   // Buffer it
+}
+```
 
-### Comparison with Other Strategies
+When a worker finishes, the next queued task is auto-dispatched:
 
-| Strategy | How it works | Pros | Cons |
-|---|---|---|---|
-| **First-Available** (ours) | Pick the first free worker | Simple, no starvation | May overload low-index workers |
-| Round-Robin | Cycle through workers in order | Even distribution | Doesn't consider current load |
-| Least-Connections | Pick worker with fewest active tasks | Optimal distribution | Slightly more tracking needed |
-| Weighted | Assign based on worker capacity | Handles heterogeneous workers | Complex configuration |
-| Random | Pick a random worker | Simple, no state needed | Uneven distribution |
+```cpp
+void handle_result(size_t index) {
+    // ... receive result, mark worker free ...
+    
+    if (!task_queue_.empty()) {
+        std::string next = task_queue_.front();
+        task_queue_.pop();
+        assign_task(next);
+    }
+}
+```
 
-### Interview Q: "Why not Round-Robin?"
+This is a **producer-consumer pattern** — stdin produces tasks, workers consume them, and `std::queue` is the buffer.
 
-"First-Available is simpler to implement and sufficient for our use case. With a small number of workers, both perform similarly. In a production system, I'd use Least-Connections because it naturally handles varying task durations."
+### Load Balancing Comparison
+
+| Strategy | How | Complexity |
+|---|---|---|
+| **First-Available** (ours) | Pick first free worker | O(n) |
+| Round-Robin | Cycle through workers | O(1) |
+| Least-Connections | Fewest active tasks | O(n) |
+| Weighted | Based on capacity | O(n) |
 
 ---
 
-## 12. Code Walkthrough
+## 12. C++ Concepts Used
+
+### RAII (Resource Acquisition Is Initialization)
+
+The `Socket` class wraps a file descriptor and closes it in the destructor:
+
+```cpp
+class Socket {
+    int fd_;
+public:
+    explicit Socket(int fd) : fd_(fd) {}
+    ~Socket() { if (fd_ >= 0) ::close(fd_); }
+    
+    // Move semantics — transfer ownership
+    Socket(Socket&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
+    
+    // No copying (unique ownership)
+    Socket(const Socket&) = delete;
+};
+```
+
+**Why RAII?** If an exception is thrown or a function returns early, the destructor still runs, preventing fd leaks. This is the C++ alternative to Go's `defer` or Python's `with`.
+
+### std::vector — Dynamic Worker Registry
+
+```cpp
+std::vector<Worker> workers_;
+workers_.emplace_back(client_fd, ip_str);   // Add worker
+workers_.erase(workers_.begin() + i);        // Remove disconnected worker
+```
+
+vs C: No manual `realloc()`, no buffer overflow bugs, automatic memory management.
+
+### std::queue — Task Buffer
+
+```cpp
+std::queue<std::string> task_queue_;
+task_queue_.push(command);                  // Enqueue
+std::string next = task_queue_.front();     // Peek
+task_queue_.pop();                          // Dequeue
+```
+
+Internally, `std::queue` uses `std::deque` as its underlying container.
+
+### std::string — Safe String Handling
+
+No `char buf[4096]`, no `strcpy`/`strcat` buffer overflows, no manual null-termination. `std::string` manages memory automatically.
+
+### Move Semantics
+
+The Socket class is **movable but not copyable** — like `std::unique_ptr`. This prevents two objects from closing the same fd:
+
+```cpp
+Socket(Socket&& other) noexcept : fd_(other.fd_) {
+    other.fd_ = -1;   // Source gives up ownership
+}
+```
+
+### Namespaces
+
+All code is under `namespace scheduler` to avoid name collisions. The protocol helpers are in `scheduler::protocol`.
+
+---
+
+## 13. Python Client — Cross-Language Interoperability
+
+### Why Python?
+
+The Python client demonstrates that our wire protocol is **language-agnostic**. Both C++ and Python implement the same 4-byte length-prefix format.
+
+### The struct Module
+
+Python's `struct` module packs/unpacks binary data — the Python equivalent of `htonl()`:
+
+```python
+# Pack: integer → 4 bytes (big-endian)
+header = struct.pack("!I", length)
+# "!" = network byte order (big-endian)
+# "I" = unsigned 32-bit integer
+
+# Unpack: 4 bytes → integer
+length = struct.unpack("!I", header)[0]
+```
+
+### Python Socket vs C++ Socket
+
+| | C++ | Python |
+|---|---|---|
+| Create | `socket(AF_INET, SOCK_STREAM, 0)` | `socket.socket(socket.AF_INET, socket.SOCK_STREAM)` |
+| Connect | `connect(fd, addr, len)` | `sock.connect((host, port))` |
+| Send all | Manual loop | `sock.sendall(data)` |
+| Receive | `recv(fd, buf, len, 0)` | `sock.recv(n)` |
+| Close | `close(fd)` | `sock.close()` |
+
+### Read-Exactly Pattern
+
+Both C++ and Python implement a loop to read exactly N bytes:
+
+```python
+def _recv_exact(self, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = self.sock.recv(n - len(buf))
+        if not chunk:
+            return b""
+        buf += chunk
+    return buf
+```
+
+This handles TCP fragmentation — you might not get all bytes in a single recv().
+
+---
+
+## 14. Code Walkthrough
 
 ### File Structure
 
 ```
-Distributed Task Scheduler/
-├── protocol.h      ← Shared definitions + wire protocol helpers
-├── master.c        ← The control center (server)
-├── worker.c        ← The execution unit (client)
-├── Makefile         ← Build system
-└── project_bible.md ← This file
+├── protocol.hpp      # Shared: RAII Socket, Worker struct, wire protocol
+├── master.cpp        # Master class: server, select loop, queue, LB
+├── worker.cpp        # TaskExecutor + WorkerNode classes
+├── client.py         # Python client: TaskClient class
+├── Makefile          # g++ -std=c++17 -Wall -Wextra
+└── project_bible.md  # This file
 ```
 
-### protocol.h — The Shared Layer
+### protocol.hpp — Key Design
 
-**Purpose**: Defines everything shared between Master and Worker.
+- `namespace scheduler` wraps everything
+- `Socket` class: RAII, movable, not copyable
+- `Worker` struct: fd, ip (std::string), is_busy
+- `protocol::send_message()` / `protocol::recv_message()` — return std::string
 
-| Component | What it does |
+### master.cpp — Master Class
+
+```cpp
+class Master {
+    Socket server_fd_;                    // RAII — auto-closes
+    std::vector<Worker> workers_;         // Dynamic registry
+    std::queue<std::string> task_queue_;  // Pending tasks buffer
+
+    void run();              // select() event loop
+    void accept_worker();    // Register new worker
+    bool assign_task();      // First-available load balancing
+    void handle_result();    // Receive result, dispatch queued tasks
+};
+```
+
+### worker.cpp — Two Classes
+
+```cpp
+class TaskExecutor {
+    static std::string execute(const std::string& cmd);
+    //  pipe() → fork() → child: dup2()+execvp()
+    //                  → parent: read(pipe)+waitpid()
+};
+
+class WorkerNode {
+    Socket master_fd_;      // RAII connection to master
+    void run();             // recv → execute → send loop
+};
+```
+
+### client.py — TaskClient Class
+
+```python
+class TaskClient:
+    def connect(self):       # TCP connection
+    def send_message(self):  # Length-prefix send (struct.pack)
+    def recv_message(self):  # Length-prefix recv (struct.unpack)
+```
+
+---
+
+## 15. Error Handling & Edge Cases
+
+| Scenario | What Happens |
 |---|---|
-| Constants | PORT, MAX_WORKERS, BUFFER_SIZE |
-| Worker struct | `{ fd, ip[16], isBusy }` |
-| `send_message()` | Sends a length-prefixed message |
-| `recv_message()` | Receives a length-prefixed message |
-
-Both functions are `static inline` — they're defined in the header so both `master.c` and `worker.c` can use them without linking issues.
-
-### master.c — Line-by-Line Key Sections
-
-#### setup_server()
-
-```c
-server_fd = socket(AF_INET, SOCK_STREAM, 0);  // Create TCP socket
-setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));  // Allow port reuse
-bind(server_fd, (struct sockaddr *)&addr, sizeof(addr));  // Bind to port 8080
-listen(server_fd, 5);   // Start listening, backlog=5
-```
-
-This is the classic Berkeley Sockets server setup — **memorize this sequence for interviews**.
-
-#### Main Event Loop
-
-```c
-while (1) {
-    FD_ZERO(&read_fds);              // Clear the watch set
-    FD_SET(STDIN_FILENO, &read_fds); // Watch stdin
-    FD_SET(server_fd, &read_fds);    // Watch for new workers
-    for (i...) FD_SET(workers[i].fd, &read_fds);  // Watch all workers
-
-    select(max_fd + 1, &read_fds, NULL, NULL, NULL);  // BLOCK
-
-    if (FD_ISSET(server_fd, ...))    accept_worker();
-    if (FD_ISSET(STDIN_FILENO, ...)) assign_task();
-    for (i...) if (FD_ISSET(workers[i].fd, ...)) handle_result();
-}
-```
-
-### worker.c — Line-by-Line Key Sections
-
-#### execute_command() — The Complete Flow
-
-```c
-// 1. Create pipe for capturing output
-pipe(pipe_fd);
-
-// 2. Fork a child process
-pid = fork();
-
-if (pid == 0) {  // CHILD
-    // 3. Redirect stdout → pipe
-    dup2(pipe_fd[1], STDOUT_FILENO);
-    dup2(pipe_fd[1], STDERR_FILENO);
-    close(pipe_fd[0]);  // Don't need read end
-    close(pipe_fd[1]);  // Already duplicated
-
-    // 4. Execute the command
-    execvp(argv[0], argv);
-    _exit(127);  // Only reached if execvp fails
-}
-
-// PARENT
-close(pipe_fd[1]);  // Don't need write end
-
-// 5. Read output from pipe
-while (read(pipe_fd[0], ...) > 0) { ... }
-
-// 6. Wait for child and get exit status
-waitpid(pid, &status, 0);
-```
-
-**This is the single most important code block in the project. Practice explaining it step by step.**
+| Worker crashes mid-task | Master detects broken TCP, removes worker, task result lost |
+| Master crashes | Workers detect disconnect (recv returns empty), exit gracefully |
+| execvp fails (bad command) | Error written to stderr (redirected to pipe), exit code 127 |
+| All workers busy | Task queued in `std::queue`, auto-dispatched when worker frees up |
+| Partial recv() | Read-exactly loops in both C++ and Python handle TCP fragmentation |
+| EINTR (signal interrupt) | select() is retried on EINTR |
 
 ---
 
-## 13. Error Handling & Edge Cases
-
-### What if a Worker Crashes Mid-Task?
-
-The TCP connection breaks. On the Master side:
-- `recv_message()` returns 0 (connection closed) or -1 (error).
-- `handle_worker_result()` detects this and removes the worker from the registry.
-- The task's result is lost (in production, you'd re-queue it).
-
-### What if the Master Crashes?
-
-Workers detect the broken connection:
-- `recv_message()` returns 0 or -1.
-- Workers exit gracefully.
-
-### What if execvp() Fails?
-
-This happens when the command doesn't exist (e.g., user types "abc123"):
-- `execvp()` returns -1 and sets errno.
-- We print the error to stderr (**which is redirected to the pipe via dup2**).
-- The parent reads this error message from the pipe.
-- Exit code 127 is sent back as the status.
-
-### What about Partial send()/recv() calls?
-
-TCP may not send/receive all bytes in one call. Both `send_message()` and `recv_message()` use loops to handle this. This is called a "write-exactly" or "read-exactly" loop.
-
-### What about SIGPIPE?
-
-If we try to write to a socket that the other side has closed, the kernel sends SIGPIPE (which kills the process by default). In production, you'd either:
-- `signal(SIGPIPE, SIG_IGN)` to ignore it, then check `send()` return value.
-- Use `MSG_NOSIGNAL` flag in `send()`.
-
----
-
-## 14. How to Build and Run
-
-### Prerequisites
-
-- Linux or WSL (Windows Subsystem for Linux)
-- GCC compiler (`sudo apt install build-essential`)
-
-### Build
+## 16. How to Build and Run
 
 ```bash
-cd "Distributed Task Scheduler"
-make clean && make
-```
+# Build (in WSL)
+cd '/mnt/c/project/Distributed Task Scheduler'
+make
 
-This produces two binaries: `master` and `worker`.
-
-### Run
-
-**Terminal 1 — Start the Master:**
-```bash
+# Terminal 1: Master
 ./master
-```
 
-**Terminal 2 — Start Worker #1:**
-```bash
-./worker
-# Or for remote: ./worker 192.168.1.100
-```
+# Terminal 2: C++ Worker
+./worker                    # default: 127.0.0.1
+./worker 192.168.1.100      # remote Master IP
 
-**Terminal 3 — Start Worker #2 (optional):**
-```bash
-./worker
-```
+# Terminal 3: Python Client
+python3 client.py                      # default: 127.0.0.1:8080
+python3 client.py 192.168.1.100 8080   # remote Master
 
-**In Terminal 1 — Submit tasks:**
-```
-uptime                    ← check system uptime
-ls -la                    ← list files
-echo "Hello World"        ← simple echo
-date                      ← current date/time
-whoami                    ← current user
-cat /etc/hostname         ← hostname
-status                    ← show worker status
-quit                      ← shutdown master
+# Commands to try:
+uptime       ls -la       date       whoami
+echo "hello"    cat /etc/hostname
+status       quit
 ```
 
 ---
 
-## 15. Potential Interview Questions (35+ Q&A)
-
-### Category: Sockets & Networking
+## 17. Interview Questions — Sockets & Networking
 
 **Q1: Explain the socket lifecycle for a TCP server.**
-A: `socket()` → creates an endpoint. `bind()` → assigns an address (IP+port). `listen()` → marks it as passive. `accept()` → blocks until a client connects and returns a new fd for that connection. This new fd is used for `send()`/`recv()`.
+> `socket()` creates an endpoint → `bind()` assigns an address → `listen()` marks as passive → `accept()` blocks until a client connects and returns a new fd → `recv()`/`send()` for communication → `close()`.
 
 **Q2: What is the difference between TCP and UDP?**
-A: TCP is connection-oriented, reliable (ACKs + retransmission), ordered, and has no message boundaries (byte stream). UDP is connectionless, unreliable, unordered, but preserves message boundaries (datagrams). We use TCP because we can't afford to lose tasks.
+> TCP: connection-oriented, reliable (ACKs + retransmission), ordered, byte-stream. UDP: connectionless, unreliable, unordered, message-oriented. We use TCP because we can't lose tasks.
 
 **Q3: What is the TCP 3-way handshake?**
-A: Client sends SYN → Server responds with SYN-ACK → Client sends ACK. This establishes a reliable connection. Each side picks an initial sequence number (ISN) for ordering data.
+> Client sends SYN → Server responds SYN-ACK → Client sends ACK. Establishes reliable connection with sequence numbers.
 
-**Q4: What is `SO_REUSEADDR` and why do you use it?**
-A: When a socket is closed, the port enters `TIME_WAIT` state for ~60 seconds (to handle late packets). `SO_REUSEADDR` allows `bind()` to succeed even if the port is in `TIME_WAIT`, which is essential during development when you restart the server frequently.
+**Q4: What is SO_REUSEADDR?**
+> Allows binding to a port in TIME_WAIT state. Without it, restarting the server within ~60s fails with "Address already in use."
 
-**Q5: What is `htonl()` and why is it necessary?**
-A: It converts a 32-bit integer from host byte order to network byte order (big-endian). Different CPUs may use different byte ordering (x86 is little-endian). Network protocols standardize on big-endian. Without conversion, a length of 6 (0x00000006) could be interpreted as 100663296 (0x06000000) on the other end.
+**Q5: Why htonl()/ntohl()?**
+> Converts between host byte order (little-endian on x86) and network byte order (big-endian). Without it, a length of 6 could be misread as 100663296 on another architecture.
 
-**Q6: Why can't you rely on a single `recv()` call to get all the data?**
-A: TCP is a stream protocol. `recv()` may return fewer bytes than requested (kernel delivers whatever's available). You must loop until you've received the expected number of bytes. This is called a "read-exactly" pattern.
+**Q6: What is the `accept()` return value?**
+> A NEW file descriptor for the specific client connection. The listening socket continues accepting others. Think: receptionist (listening fd) vs dedicated phone lines (accepted fds).
 
-**Q7: What happens if you don't call `close()` on a socket?**
-A: The file descriptor leaks. Eventually, the process reaches the maximum number of open file descriptors (typically 1024 by default) and future `socket()`/`open()` calls fail with `EMFILE`.
+**Q7: Why can't a single recv() get all the data?**
+> TCP is a stream protocol. The kernel delivers whatever's available, which may be a partial message. You need a read-exactly loop.
 
----
+**Q8: What is TIME_WAIT?**
+> A TCP state lasting ~60s after closing, ensuring all in-flight packets reach their destination. Prevents port reuse without SO_REUSEADDR.
 
-### Category: Process Management (fork, exec, wait)
+**Q9: What does INADDR_ANY mean?**
+> Bind to all available network interfaces. The server accepts connections on any of its IP addresses (localhost, LAN, etc).
 
-**Q8: What does `fork()` return?**
-A: Two different values to two different processes: > 0 (child's PID) to the parent, and 0 to the child. On error, -1 to the caller and no child is created.
-
-**Q9: What is Copy-On-Write (COW)?**
-A: After fork(), parent and child share the same physical memory pages (marked read-only). When either process writes, a page fault triggers, and the kernel copies only that specific page. This makes fork() fast because most pages are never copied, especially when the child immediately calls exec().
-
-**Q10: What's the difference between `fork()` and `vfork()`?**
-A: `vfork()` is an old optimization where the child shares the parent's address space entirely (no COW). The parent is suspended until the child calls `exec()` or `_exit()`. It's mostly obsolete because modern COW makes `fork()` nearly as fast.
-
-**Q11: What happens if you call `exec()` without `fork()` first?**
-A: The current process is **replaced** by the new program. There's no going back. The Worker would cease to exist. That's why we fork() first — the child does exec(), and the parent (Worker) continues.
-
-**Q12: What is the difference between `execvp()` and `execve()`?**
-A: `execvp()` takes an argv array and searches the system PATH for the program. `execve()` takes argv + a custom environment array and requires the full path to the binary. `execve()` is the only "true" system call — all other exec variants are library wrappers around it.
-
-**Q13: Why use `_exit()` instead of `exit()` in the child after execvp fails?**
-A: `exit()` flushes stdio buffers and runs `atexit()` handlers, which are shared with (copied from) the parent. This could cause double-flushing of output or other side effects. `_exit()` terminates immediately without any cleanup.
-
-**Q14: What is a zombie process and how do you prevent it?**
-A: A zombie is a terminated child whose exit status hasn't been read by the parent via `waitpid()`. It occupies a slot in the process table. Prevention: always call `waitpid()` (or use `signal(SIGCHLD, SIG_IGN)` to auto-reap).
-
-**Q15: What is an orphan process?**
-A: A child whose parent has terminated. The init process (PID 1) adopts it and reaps it when it exits. Orphans are not harmful — zombies are.
-
-**Q16: How does `waitpid()` differ from `wait()`?**
-A: `wait()` waits for ANY child. `waitpid()` waits for a SPECIFIC child (by PID). `waitpid()` also supports the `WNOHANG` flag for non-blocking checks.
+**Q10: What's the `listen()` backlog?**
+> The max pending connections queued before accept() is called. NOT the max total connections.
 
 ---
 
-### Category: I/O and Pipes
+## 18. Interview Questions — Process Management
 
-**Q17: How does `dup2()` work?**
-A: `dup2(old_fd, new_fd)` makes `new_fd` refer to the same open file description as `old_fd`. If `new_fd` was already open, it's closed first. After `dup2(pipe_fd[1], STDOUT_FILENO)`, any write to stdout goes to the pipe instead of the terminal.
+**Q11: What does fork() return?**
+> Two values to two processes: >0 (child's PID) to parent, 0 to child, -1 on error.
 
-**Q18: What is a pipe and how is it different from a socket?**
-A: A pipe is a unidirectional IPC mechanism — one end writes, one end reads. It only works between related processes (parent-child via fork). A socket is bidirectional and works between unrelated processes, even across networks.
+**Q12: What is Copy-On-Write?**
+> After fork(), parent and child share physical memory pages marked read-only. A page is physically copied only when written to. Makes fork+exec nearly free since the child immediately replaces its memory.
 
-**Q19: Why close unused pipe ends?**
-A: Two reasons: (1) `read()` on a pipe returns EOF (0) only when ALL write ends are closed. If the parent keeps pipe_fd[1] open, it will never see EOF. (2) File descriptors are a limited resource.
+**Q13: fork() vs vfork()?**
+> vfork() shares the parent's address space entirely (parent suspended until child calls exec/exit). Mostly obsolete because COW makes fork() nearly as fast.
 
-**Q20: What is the pipe buffer size?**
-A: On Linux, it's typically 64KB (16 pages of 4KB). You can check with `cat /proc/sys/fs/pipe-max-size`. If the buffer is full, `write()` blocks until the reader drains some data.
+**Q14: What happens if you call exec() without fork()?**
+> The current process is permanently replaced. The Worker would cease to exist.
 
-**Q21: How does the shell implement `ls | grep "txt"`?**
-A: The shell creates a pipe, forks twice. For `ls`: `dup2(pipe_write, STDOUT)` then `exec("ls")`. For `grep`: `dup2(pipe_read, STDIN)` then `exec("grep", "txt")`. The pipe connects ls's stdout to grep's stdin. This is exactly the same dup2 technique we use.
+**Q15: Difference between execvp() and execve()?**
+> execvp: takes argv array, searches PATH. execve: takes argv + custom environment, needs full path. execve is the only true syscall — all others are wrappers.
 
----
+**Q16: Why _exit() instead of exit() in the child?**
+> exit() flushes stdio buffers and runs atexit handlers — shared with parent via fork. This causes double-flushing. _exit() terminates immediately without cleanup.
 
-### Category: I/O Multiplexing
+**Q17: What is a zombie process?**
+> A terminated child whose exit status hasn't been read by waitpid(). Occupies a process table slot. Fixed by calling waitpid().
 
-**Q22: What is `select()` and why do you use it?**
-A: `select()` monitors multiple file descriptors for readability/writability. It blocks until at least one fd is ready. We use it because the Master needs to simultaneously watch stdin (for commands), the server socket (for new workers), and all worker sockets (for results) — without threads.
+**Q18: What is an orphan process?**
+> A child whose parent died. Adopted by init (PID 1), which reaps it. Not harmful.
 
-**Q23: What are the alternatives to `select()`?**
-A: `poll()` (no FD_SETSIZE limit), `epoll()` (Linux, O(1) event notification, scales to millions of connections), `kqueue` (BSD/macOS). For our use case with < 10 fds, select() is sufficient.
+**Q19: waitpid() vs wait()?**
+> wait() waits for ANY child. waitpid() waits for a SPECIFIC child and supports WNOHANG (non-blocking).
 
-**Q24: What is the `nfds` parameter in `select()`?**
-A: It's the highest-numbered fd in any of the fd_sets, plus one. The kernel uses this to know how many bits to check. Setting it correctly is important for both correctness and performance.
+**Q20: What is WNOHANG?**
+> Makes waitpid() non-blocking — returns immediately if no child has exited. Useful in event loops.
 
-**Q25: Why do you rebuild the fd_set on every iteration?**
-A: `select()` **modifies** the fd_set to contain only the ready fds. After it returns, the original set is destroyed. You must rebuild it from scratch before calling select() again.
+**Q21: How do you get the exit code after waitpid()?**
+> Use macros: WIFEXITED(status) checks normal exit, WEXITSTATUS(status) gets the code.
 
----
-
-### Category: Architecture & Design
-
-**Q26: Why the Master-Worker model?**
-A: It provides a clean separation of concerns: the Master handles task scheduling and coordination, Workers handle execution. It's scalable (add more Workers to handle more tasks) and fault-tolerant (if one Worker fails, others continue).
-
-**Q27: How does your load balancer work?**
-A: First-Available selection. I iterate through the worker array and assign the task to the first worker where `isBusy == false`. When the worker sends back a result, I reset `isBusy` to false. It's O(n) complexity.
-
-**Q28: What happens if all workers are busy?**
-A: The Master prints a message asking the user to try again. In production, I'd implement a task queue that buffers pending tasks and dispatches them as workers become free.
-
-**Q29: How would you implement a task queue?**
-A: A circular buffer (ring buffer) or a linked list of task strings. When a task arrives and all workers are busy, enqueue it. When a worker finishes, dequeue the next task and assign it. This is a producer-consumer pattern.
-
-**Q30: What if a worker crashes?**
-A: The Master detects the broken TCP connection (recv returns 0 or -1), removes the worker from the registry, and the task result is lost. To handle this properly, we'd need: (1) task acknowledgment, (2) a pending tasks list, (3) retry logic with a configurable retry count.
-
-**Q31: Why TCP instead of UDP?**
-A: Reliability. We can't afford to lose task commands or results. TCP provides guaranteed, ordered delivery with automatic retransmission. The overhead is acceptable because task scheduling is not latency-sensitive.
+**Q22: What is exit code 127?**
+> Convention for "command not found" (same as bash). We use it when execvp() fails.
 
 ---
 
-### Category: Systems / General
+## 19. Interview Questions — I/O and Pipes
 
-**Q32: What does "everything is a file" mean in UNIX?**
-A: UNIX represents most I/O resources as file descriptors: regular files, directories, sockets, pipes, devices (`/dev/*`), and even `/proc` entries. This uniform interface means `read()`, `write()`, and `close()` work on all of them.
+**Q23: How does dup2() work?**
+> `dup2(old, new)` makes fd `new` point to the same file/pipe as `old`. After `dup2(pipe, STDOUT)`, writes to stdout go into the pipe.
 
-**Q33: What are the standard file descriptors?**
-A: `0 = stdin`, `1 = stdout`, `2 = stderr`. Every process starts with these three open. That's why when we `dup2(pipe_fd[1], 1)`, we redirect stdout — fd 1 now points to the pipe.
+**Q24: What is a pipe vs a socket?**
+> Pipe: unidirectional, between related processes (parent-child). Socket: bidirectional, between any processes, even across networks.
 
-**Q34: What is `EINTR` and why do you handle it?**
-A: `EINTR` means a system call was interrupted by a signal (e.g., SIGCHLD). The call returns -1 with `errno == EINTR`. The correct response is to simply retry the call. We check for this in the select() loop.
+**Q25: Why close unused pipe ends?**
+> (1) read() gets EOF only when ALL write ends are closed. If parent keeps write end open, read never returns EOF. (2) Conserve file descriptors.
 
-**Q35: How would you make this system production-ready?**
-A: (1) Thread pool on the Master for handling multiple results concurrently. (2) Task persistence (store tasks in a database in case of Master crash). (3) Worker heartbeats for health monitoring. (4) TLS encryption for security. (5) Task timeout and retry logic. (6) Configurable load balancing strategies. (7) A web UI for monitoring.
+**Q26: What is the pipe buffer size?**
+> Typically 64KB on Linux. If full, write() blocks. If empty, read() blocks.
+
+**Q27: How does the shell implement `ls | grep "txt"`?**
+> Creates a pipe, forks twice. ls child: `dup2(pipe_write, stdout)` + `exec("ls")`. grep child: `dup2(pipe_read, stdin)` + `exec("grep")`. Same technique we use.
+
+**Q28: What is SIGPIPE?**
+> Signal sent when writing to a pipe/socket where the reader has closed. Default action: terminate. Fix: ignore SIGPIPE or use MSG_NOSIGNAL.
 
 ---
 
-## 16. How to Extend This Project
+## 20. Interview Questions — C++ Concepts
 
-These are good talking points for "What would you do next?"
+**Q29: What is RAII?**
+> Resource Acquisition Is Initialization. Resources (fds, memory, locks) are acquired in constructors and released in destructors. Guarantees cleanup even during exceptions. Our Socket class is an example.
+
+**Q30: Why is your Socket class movable but not copyable?**
+> Two Socket objects with the same fd would double-close it. Like `std::unique_ptr`, only one object can own the resource. Move semantics transfer ownership without copying.
+
+**Q31: Explain move semantics with your Socket.**
+> `Socket(Socket&& other)` transfers the fd and sets `other.fd_ = -1`. The source gives up ownership. No fd duplication occurs. This is efficient for returning Socket from functions.
+
+**Q32: What's the Rule of Five?**
+> If a class defines any of: destructor, copy constructor, copy assignment, move constructor, move assignment — it should define all five. Our Socket defines destructor + move pair and deletes the copy pair.
+
+**Q33: Why std::vector over a raw array for workers?**
+> Dynamic sizing (workers join/leave at runtime), bounds checking, automatic memory management, works with range-based for loops, has erase() for removal.
+
+**Q34: How does std::queue work internally?**
+> It's a container adapter wrapping `std::deque` by default. Provides FIFO operations: push() (back), front(), pop() (front). O(1) amortized for all operations.
+
+**Q35: Why namespace rather than a class with static methods?**
+> Namespaces are for organizing code without instantiation overhead. `protocol::send_message()` doesn't need object state. Static class methods would also work but are less idiomatic in C++.
+
+**Q36: What does `explicit` on the Socket constructor do?**
+> Prevents implicit conversion: `Socket s = 5;` is rejected. Forces `Socket s(5);` or `Socket s{5}`. Prevents bugs from accidental type conversions.
+
+**Q37: Why emplace_back() instead of push_back()?**
+> `emplace_back(fd, ip)` constructs the Worker in-place inside the vector. `push_back()` first creates a temporary Worker, then copies/moves it. emplace_back is more efficient.
+
+**Q38: What's the difference between std::string and C strings?**
+> std::string: automatic memory, knows its length, no buffer overflow, supports concatenation with `+`. C strings: null-terminated char arrays, manual memory, vulnerable to overflow. We use std::string everywhere for safety.
+
+---
+
+## 21. Interview Questions — Python & Cross-Language
+
+**Q39: Why did you write the client in Python?**
+> "To demonstrate cross-language interoperability. The Python client implements the exact same wire protocol as C++, proving the protocol design is language-agnostic. Python's rapid prototyping also made it ideal for building the interactive CLI."
+
+**Q40: How does struct.pack("!I", len) work?**
+> `"!"` = network byte order (big-endian), `"I"` = unsigned 32-bit integer. This is the Python equivalent of `htonl()`. It converts an integer to 4 big-endian bytes.
+
+**Q41: Python's sendall() vs C++'s send() loop?**
+> `sendall()` automatically loops until all bytes are sent, handling partial sends internally. In C++, we write the loop manually. Same result, Python just wraps it.
+
+**Q42: How did you ensure protocol compatibility?**
+> Both languages use: (1) 4-byte big-endian length header, (2) UTF-8 payload encoding, (3) read-exactly loops for receiving. The `struct` module in Python matches `htonl`/`ntohl` in C++.
+
+**Q43: What is the GIL and does it matter here?**
+> Python's Global Interpreter Lock prevents true multithreading. But our client is single-threaded and I/O-bound (waiting on sockets), so the GIL has no impact. For CPU-bound parallel work, you'd use multiprocessing.
+
+---
+
+## 22. Interview Questions — Architecture & Design
+
+**Q44: Why the Master-Worker model?**
+> Separation of concerns: Master schedules, Workers execute. Scalable (add workers), and partially fault-tolerant (one worker fails, others continue).
+
+**Q45: How does your load balancer work?**
+> First-Available: linear scan, pick first worker where `is_busy == false`. O(n). Simple and sufficient for our scale.
+
+**Q46: What happens when all workers are busy?**
+> Tasks are queued in `std::queue`. When a worker sends back a result, the next queued task is auto-dispatched. This is the producer-consumer pattern.
+
+**Q47: What if a worker crashes?**
+> Master detects broken TCP (recv returns empty), removes the worker, task result is lost. To fix: task acknowledgment + retry logic + pending task list.
+
+**Q48: Why select() instead of threads?**
+> Avoids thread synchronization complexity (mutexes, race conditions, deadlocks). For our small number of connections, select() is simpler and correct.
+
+**Q49: How would you make this production-ready?**
+> (1) Thread pool or epoll for scalability. (2) Task persistence (database). (3) Worker heartbeats. (4) TLS encryption. (5) Task timeout + retry. (6) Web dashboard.
+
+**Q50: What's the most challenging part of this project?**
+> "The fork/dup2/execvp pipeline in the Worker. Getting the pipe ends, file descriptor redirections, and child/parent responsibilities right requires careful ordering. A single missed close() or wrong dup2() target causes subtle bugs — hung reads, missing output, or zombie processes."
+
+---
+
+## 23. How to Extend This Project
 
 | Extension | Difficulty | Description |
 |---|---|---|
-| Task Queue | Easy | Buffer tasks when all workers are busy |
-| Task Priority | Medium | Min-heap / priority queue for urgent tasks |
+| Task Priority Queue | Easy | `std::priority_queue` instead of `std::queue` |
 | Worker Heartbeat | Medium | Periodic ping-pong to detect dead workers |
-| Task Retry | Medium | Re-queue a task if the worker crashes |
-| Task Timeout | Medium | Kill tasks that take too long (`alarm()` + signal handler) |
-| Multi-threaded Master | Hard | Use pthreads instead of select() |
-| TLS Encryption | Hard | Use OpenSSL for encrypted communication |
-| Web Dashboard | Hard | Add an HTTP endpoint for monitoring |
+| Task Retry | Medium | Re-queue task if worker crashes |
+| Task Timeout | Medium | `alarm()` + signal handler to kill hanging tasks |
+| Thread Pool Master | Hard | `std::thread` or `pthread` instead of select() |
+| TLS Encryption | Hard | OpenSSL for encrypted communication |
+| Web Dashboard | Hard | HTTP endpoint for monitoring |
+| Python Worker | Easy | Implement worker in Python too (subprocess module) |
 
 ---
 
-## 17. Glossary
+## 24. Glossary
 
 | Term | Definition |
 |---|---|
-| **fd (File Descriptor)** | An integer that refers to an open file, socket, pipe, etc. |
-| **Socket** | An endpoint for network communication |
-| **TCP** | Transmission Control Protocol — reliable, ordered, byte-stream |
-| **UDP** | User Datagram Protocol — unreliable, unordered, message-oriented |
-| **SYN/ACK** | TCP handshake packets (Synchronize / Acknowledge) |
-| **fork()** | System call to create a new process (copy of the parent) |
-| **exec()** | System call to replace the current process with a new program |
+| **RAII** | Resource Acquisition Is Initialization — C++ pattern for automatic cleanup |
+| **Socket** | An endpoint for network communication (represented as fd) |
+| **TCP** | Reliable, ordered, connection-oriented byte-stream protocol |
+| **fork()** | System call to create a new process (copy of parent) |
+| **exec()** | System call to replace current process with a new program |
 | **COW** | Copy-On-Write — memory optimization for fork() |
-| **Zombie** | Terminated child process not yet reaped by parent |
-| **Orphan** | Child process whose parent has terminated |
-| **pipe()** | Creates a unidirectional data channel between processes |
-| **dup2()** | Duplicates a file descriptor (redirects I/O) |
-| **waitpid()** | Waits for a child process and retrieves its exit status |
-| **select()** | I/O multiplexing — monitors multiple fds for activity |
-| **htonl()/ntohl()** | Host-to-Network / Network-to-Host byte order conversion |
-| **Big-Endian** | Most significant byte first (network byte order) |
-| **Little-Endian** | Least significant byte first (x86 CPUs) |
-| **Backlog** | Queue size for pending connections in listen() |
-| **TIME_WAIT** | TCP state after closing — port stays reserved ~60s |
-| **SIGPIPE** | Signal sent when writing to a broken pipe/socket |
-| **EINTR** | Error code: system call interrupted by a signal |
+| **dup2()** | Duplicate a file descriptor (redirect I/O) |
+| **pipe()** | Create a unidirectional data channel between processes |
+| **waitpid()** | Wait for child process and retrieve exit status |
+| **select()** | I/O multiplexing — monitor multiple fds for activity |
+| **htonl()/ntohl()** | Host↔Network byte order conversion |
+| **std::vector** | Dynamic array with automatic memory management |
+| **std::queue** | FIFO container adapter (wraps std::deque) |
+| **Move semantics** | Transfer resource ownership without copying |
+| **Zombie** | Terminated child not yet reaped by waitpid() |
+| **struct.pack()** | Python binary packing — equivalent of htonl() |
+| **GIL** | Python's Global Interpreter Lock |
 
 ---
 
 *Last Updated: April 2026*
-*Project: Distributed Task Scheduler — C-DAC Interview Preparation*
+*Project: Distributed Task Scheduler — C++ & Python — Interview Preparation*
