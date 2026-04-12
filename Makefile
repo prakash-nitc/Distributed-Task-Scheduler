@@ -1,15 +1,16 @@
 # Makefile — Distributed Task Scheduler (C++)
 
-CXX     = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -g
-TARGETS = master worker
+CXX      = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -pthread
+TARGETS  = master worker
+HEADERS  = protocol.hpp logger.hpp
 
 all: $(TARGETS)
 
-master: master.cpp protocol.hpp
+master: master.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) -o master master.cpp
 
-worker: worker.cpp protocol.hpp
+worker: worker.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) -o worker worker.cpp
 
 clean:
