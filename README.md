@@ -77,15 +77,6 @@ quit       ← shutdown
 └── project_bible.md  # Interview documentation (40+ Q&A)
 ```
 
-## Documentation
-
-See [`project_bible.md`](project_bible.md) for comprehensive documentation including:
-- Architecture & data flow walkthroughs
-- Deep dives on sockets, fork/exec, dup2, pipes, select
-- C++ concepts: RAII, move semantics, STL containers
-- Python socket programming
-- 40+ interview questions with model answers
-
 ## License
 
 MIT
