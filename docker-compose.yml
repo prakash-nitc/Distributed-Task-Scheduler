@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+
+  master:
+    build: .
+    container_name: scheduler-master
+    command: ["./master"]
+    ports:
+      - "8080:8080"
+    networks:
+      - scheduler-net
+    healthcheck:
+      # Probe the TCP port — bash /dev/tcp is available in Ubuntu
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080' 2>/dev/null"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 3s
+
+  worker:
+    build: .
+    command: ["./worker", "master"]
+    depends_on:
+      master:
+        condition: service_healthy
+    restart: on-failure
+    networks:
+      - scheduler-net
+
+networks:
+  scheduler-net:
+    driver: bridge
+
+# Usage:
+#   docker-compose up --scale worker=3        # start master + 3 workers
+#   docker-compose exec master python3 client.py master   # submit tasks

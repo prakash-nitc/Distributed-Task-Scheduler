@@ -1,0 +1,11 @@
+master
+worker
+build/
+.git/
+*.md
+*.o
+*.dSYM
+__pycache__/
+*.pyc
+.vscode/
+.idea/
