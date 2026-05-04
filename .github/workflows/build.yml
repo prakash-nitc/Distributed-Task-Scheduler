@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: Native build (Make + CMake) ──────────────────────────────────────
+  build-native:
+    name: Build — Make & CMake
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++ make cmake
+
+      - name: Build with Make
+        run: make
+
+      - name: Verify Make binaries
+        run: |
+          test -f ./master && echo "✓ master"
+          test -f ./worker && echo "✓ worker"
+
+      - name: Build with CMake
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Verify CMake binaries
+        run: |
+          test -f ./build/master && echo "✓ build/master"
+          test -f ./build/worker && echo "✓ build/worker"
+
+  # ── Job 2: Docker build ──────────────────────────────────────────────────────
+  build-docker:
+    name: Build — Docker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Build Docker image (multi-stage)
+        run: docker build -t distributed-task-scheduler .
+
+      - name: Confirm image exists
+        run: docker image inspect distributed-task-scheduler --format "✓ image size: {{.Size}} bytes"
